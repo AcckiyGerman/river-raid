@@ -1,0 +1,49 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#wrap {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+  touch-action: none;
+}
+#pauseBtn, #bombBtn {
+  position: fixed;
+  width: 52px;
+  height: 52px;
+  border: 2px solid #888;
+  border-radius: 10px;
+  background: rgba(0,0,0,0.55);
+  color: #eee;
+  font-size: 20px;
+  line-height: 1;
+  z-index: 10;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+#pauseBtn {
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  right: calc(env(safe-area-inset-right, 0px) + 8px);
+  font-size: 15px;
+}
+#bombBtn {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  left: calc(env(safe-area-inset-left, 0px) + 10px);
+}
+#pauseBtn:active, #bombBtn:active { background: rgba(120,120,120,0.6); }
