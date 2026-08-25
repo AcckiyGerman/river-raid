@@ -80,6 +80,25 @@ const SPR = {
     '.2..111..2.','....111.....'],
     { '1': '#77803c', '2': '#3a3a32', '3': '#4c5526' }, 2),
 };
+/* power-up badges (16x16) */
+function badge(color, text) {
+  const c = document.createElement('canvas'); c.width = 16; c.height = 16;
+  const g = c.getContext('2d');
+  g.fillStyle = '#10142a'; g.fillRect(0, 0, 16, 16);
+  g.fillStyle = color; g.fillRect(1, 1, 14, 14);
+  g.fillStyle = '#10142a';
+  g.font = 'bold 11px "Courier New", monospace';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(text, 8, 9);
+  return c;
+}
+const PU_SPR = {
+  life: SPR.player.canvas,
+  triple: badge('#ffd24a', '3X'),
+  rapid: badge('#ff8c2a', 'FF'),
+  shield: badge('#4a9aff', 'S'),
+  gem: badge('#57e86a', '$'),
+};
 
 /* ---------- audio ---------- */
 let ac = null, noiseBuf = null, muted = false;
@@ -128,6 +147,7 @@ const sfx = {
   stage:  () => { beep(520, 0.1, 'square', 0.1); beep(660, 0.1, 'square', 0.1, 0, 0.11); beep(880, 0.16, 'square', 0.1, 0, 0.22); },
   tshoot: () => beep(380, 0.08, 'square', 0.05, -220),
   warn:   () => beep(300, 0.12, 'square', 0.08),
+  pickup: () => { beep(700, 0.06, 'square', 0.06); beep(1050, 0.08, 'square', 0.06, 0, 0.06); },
 };
 
 /* ---------- river (banks) ---------- */
@@ -210,31 +230,87 @@ function paintRow(buf, wy) {
   buf.fillStyle = '#8a6a2a';
   buf.fillRect(left - 1, 0, 2, 1);
   buf.fillRect(right - 1, 0, 2, 1);
-  // rocks / bushes on sand
-  const h3 = hash1(wy * 13 + 29);
-  if ((h3 & 15) === 0) {
-    const side = (h3 >> 3) & 1;
-    let rx = side ? right + 8 + ((h3 >> 5) % Math.max(1, W - right - 12))
-                  : 4 + ((h3 >> 5) % Math.max(1, left - 12));
-    if (side === 0 && rx + 3 > left - 4) rx = 2;
-    if (side === 1 && rx < right + 2) rx = W - 5;
-    buf.fillStyle = (h3 & 2) ? '#9a7a30' : '#7a5a20';
-    buf.fillRect(rx, 0, 3, 1);
+}
+
+/* Bank decorations (houses, trees, bushes, grass). Drawn in a SECOND pass
+   after the sand rows, because a decor sprite spans multiple rows and would
+   be overpainted by the sand of the rows it extends into. Deterministic per
+   worldY, so they scroll with the banks. */
+function paintDecorAt(buf, wy, row, left, right) {
+  if (row + 12 >= HB) return; // sprite must fit in the buffer (extends down)
+  const hd = hash1(wy * 29 + 101);
+  const dr = hd % 512;
+  if (dr >= 28) return; // ~5.5% of rows carry a decor item
+  let side = (hd >> 8) & 1;
+  if (side && W - right < 26) side = 0; // not enough sand on the right
+  if (!side && left < 26) side = 1;
+  let x;
+  if (side) {
+    const span = W - right - 20;
+    if (span <= 4) return;
+    x = right + 8 + ((hd >> 5) % span);
+  } else {
+    const span = left - 20;
+    if (span <= 4) return;
+    x = 4 + ((hd >> 5) % span);
+  }
+  buf.save();
+  buf.translate(0, row);
+  paintDecor(buf, dr, x);
+  buf.restore();
+}
+
+function paintDecor(buf, dr, x) {
+  if (dr < 2) {
+    // house: red roof, light walls, door + windows
+    buf.fillStyle = '#a03a2a'; buf.fillRect(x - 2, 0, 18, 1);
+    buf.fillStyle = '#b84a34'; buf.fillRect(x - 1, 1, 16, 1);
+    buf.fillStyle = '#d8c090'; buf.fillRect(x, 2, 14, 6);
+    buf.fillStyle = '#7a4a20'; buf.fillRect(x + 6, 5, 3, 3);
+    buf.fillStyle = '#7ac8f0'; buf.fillRect(x + 1, 3, 3, 2);
+    buf.fillRect(x + 10, 3, 3, 2);
+  } else if (dr < 8) {
+    // tree: trunk + layered crown
+    buf.fillStyle = '#5a3a18'; buf.fillRect(x + 3, 8, 3, 5);
+    buf.fillStyle = '#2f7a1f'; buf.fillRect(x, 3, 9, 6);
+    buf.fillStyle = '#3f9a2a'; buf.fillRect(x + 1, 1, 7, 4);
+    buf.fillStyle = '#57b53a'; buf.fillRect(x + 2, 0, 4, 2);
+  } else if (dr < 20) {
+    // bush
+    buf.fillStyle = '#3a7a24'; buf.fillRect(x, 2, 7, 3);
+    buf.fillStyle = '#4a9a30'; buf.fillRect(x + 1, 1, 5, 2);
+    buf.fillStyle = '#2a5a18'; buf.fillRect(x + 2, 4, 3, 1);
+  } else {
+    // grass tuft
+    buf.fillStyle = '#4a8a2a';
+    buf.fillRect(x, 0, 1, 3);
+    buf.fillRect(x + 2, 1, 1, 2);
+    buf.fillRect(x + 4, 0, 1, 2);
   }
 }
 
 let bufTopWorld = 0; // worldY of buffer row 0 (smallest worldY)
 let terRem = 0; // fractional scroll remainder (keeps buffer locked to camTop)
-function initTerrain(camTop) {
-  bufTopWorld = camTop - TOPM;
-  terRem = 0;
-  river.ensureLow(bufTopWorld - 120);
-  for (let r = 0; r < HB; r++) {
+function paintBufferRows(fromRow, toRow) {
+  // pass 1: sand/water/edges
+  for (let r = fromRow; r < toRow; r++) {
     terCtx.save();
     terCtx.translate(0, r);
     paintRow(terCtx, bufTopWorld + r);
     terCtx.restore();
   }
+  // pass 2: decor (multi-row sprites) over the sand
+  for (let r = fromRow; r < toRow; r++) {
+    const wy = bufTopWorld + r;
+    const b = river.sample(wy);
+    paintDecorAt(terCtx, wy, r, b.cx - b.half, b.cx + b.half);
+  }
+}
+function initTerrain(camTop) {
+  bufTopWorld = camTop - TOPM;
+  terRem = 0;
+  river.ensureLow(bufTopWorld - 120);
+  paintBufferRows(0, HB);
 }
 function scrollTerrain(d) {
   if (d <= 0) return;
@@ -249,12 +325,7 @@ function scrollTerrain(d) {
   river.ensureLow(bufTopWorld - 120);
   river.trimHigh(bufTopWorld + HB + 200);
   terCtx.drawImage(ter, 0, 0, W, HB - d, 0, d, W, HB - d);
-  for (let r = 0; r < d; r++) {
-    terCtx.save();
-    terCtx.translate(0, r);
-    paintRow(terCtx, bufTopWorld + r);
-    terCtx.restore();
-  }
+  paintBufferRows(0, d);
 }
 
 /* ---------- game state ---------- */
@@ -264,10 +335,27 @@ let prevState = ST.TITLE;
 
 let camTop, scroll, stage, stageDist;
 let score, hiScore, lives, bombs;
-let player, bullets, tbullets, enemies, fuels, bridges, particles;
+let player, bullets, tbullets, enemies, fuels, bridges, particles, powerups;
 let spawnAcc, bridgeAcc, fuelAcc, fuelBeepT;
 let dieT, banner, bannerT;
+let tripleT = 0, rapidT = 0, shieldT = 0; // active power-up timers
 let time = 0;
+
+/* power-up drop table: [type, weight] */
+const PU_TABLE = [
+  ['gem', 30],      // +150 points (common)
+  ['life', 6],      // +1 life (rare)
+  ['triple', 16],   // triple shot 10s
+  ['rapid', 16],    // rapid fire 10s
+  ['shield', 12],   // shield 8s
+];
+function rollPowerup() {
+  let total = 0;
+  for (const p of PU_TABLE) total += p[1];
+  let r = Math.random() * total;
+  for (const p of PU_TABLE) { r -= p[1]; if (r <= 0) return p[0]; }
+  return 'gem';
+}
 
 hiScore = +(localStorage.getItem('rr_hiscore') || 0);
 
@@ -275,10 +363,12 @@ function resetGame() {
   score = 0; lives = 3; bombs = 2;
   stage = 1; stageDist = 0;
   scroll = 130;
-  bullets = []; tbullets = []; enemies = []; fuels = []; bridges = []; particles = [];
+  bullets = []; tbullets = []; enemies = []; fuels = []; bridges = [];
+  particles = []; powerups = [];
   spawnAcc = 300; bridgeAcc = 1500; fuelAcc = 700; fuelBeepT = 0;
   dieT = 0; banner = 'STAGE 1'; bannerT = 2;
   camTop = 0;
+  tripleT = 0; rapidT = 0; shieldT = 0;
   river.init();
   initTerrain(camTop);
   player = { x: river.sample(H - 100).cx, y: H - 110, inv: 2, fuel: 100, fireCd: 0 };
@@ -326,12 +416,24 @@ function spawnFuel() {
   fuels.push({ w: y, side, x: side ? b.cx + b.half : b.cx - b.half, zw: 52, hh: 24 });
 }
 
-function killEnemy(e, byBomb) {
+function killEnemy(e, byBomb, drop) {
   const sy = e.w - camTop;
   spawnExplosion(e.x, sy, e.t === 'ship' || e.t === 'tank');
   e.t === 'ship' ? sfx.boomB() : sfx.boomS();
   score += e.pts + (byBomb ? 50 : 0);
   e.dead = true;
+  // sometimes a power-up drops where the enemy died (bombs don't drop)
+  if (drop !== false && !byBomb && Math.random() < 0.22 && powerups.length < 4)
+    powerups.push({ w: e.w, x: e.x, type: rollPowerup(), ph: rnd(0, 6) });
+}
+
+function applyPowerup(type) {
+  sfx.pickup();
+  if (type === 'gem') score += 150;
+  else if (type === 'life') lives = Math.min(5, lives + 1);
+  else if (type === 'triple') tripleT = 10;
+  else if (type === 'rapid') rapidT = 10;
+  else if (type === 'shield') shieldT = 8;
 }
 
 /* ---------- input ---------- */
@@ -480,10 +582,14 @@ function update(dt) {
   player.fireCd -= dt;
   const wantFire = pointerDown || keys.Space;
   if (wantFire && player.fireCd <= 0) {
-    player.fireCd = 0.18;
+    player.fireCd = rapidT > 0 ? 0.09 : 0.18;
     let n = 0; for (const b of bullets) if (!b.dead) n++;
-    if (n < 2) {
+    if (n < 4) {
       bullets.push({ x: player.x, y: player.y - 18, dead: false });
+      if (tripleT > 0) {
+        bullets.push({ x: player.x - 12, y: player.y - 12, dead: false });
+        bullets.push({ x: player.x + 12, y: player.y - 12, dead: false });
+      }
       sfx.shoot();
     }
   }
@@ -554,9 +660,8 @@ function update(dt) {
     // enemy vs player
     if (!e.dead && player.inv <= 0) {
       if (Math.abs(e.x - player.x) < e.hw + 9 && Math.abs(sy - player.y) < e.hh + 10) {
-        killEnemy(e, false);
-        crash();
-        return;
+        if (shieldT > 0) killEnemy(e, false, false); // shield eats the hit
+        else { killEnemy(e, false, false); crash(); return; }
       }
     }
     // cleanup
@@ -572,11 +677,26 @@ function update(dt) {
     if (!tb.dead && player.inv <= 0 &&
         Math.abs(tb.x - player.x) < 10 && Math.abs(tb.y - player.y) < 13) {
       tb.dead = true;
-      crash();
-      return;
+      if (shieldT <= 0) { crash(); return; }
     }
   }
   tbullets = tbullets.filter(b => !b.dead);
+
+  // power-up timers
+  if (tripleT > 0) tripleT -= dt;
+  if (rapidT > 0) rapidT -= dt;
+  if (shieldT > 0) shieldT -= dt;
+
+  // power-ups: bob, pickup, cleanup (they scroll with the world)
+  for (const p of powerups) {
+    const sy = p.w - camTop;
+    if (sy > H + 40) { p.dead = true; continue; }
+    if (Math.abs(p.x - player.x) < 22 && Math.abs(sy - player.y) < 24) {
+      p.dead = true;
+      applyPowerup(p.type);
+    }
+  }
+  powerups = powerups.filter(p => !p.dead);
 
   // fuels: refuel + cleanup
   for (const f of fuels) {
@@ -690,6 +810,13 @@ function draw() {
   ctx.fillStyle = '#fff';
   for (const b of bullets) ctx.fillRect(Math.round(b.x) - 2, Math.round(b.y), 4, 10);
 
+  // power-ups (bobbing badges)
+  for (const p of powerups) {
+    const sy = p.w - camTop + Math.sin(time * 3 + p.ph) * 4;
+    if (sy < -30 || sy > H + 30) continue;
+    ctx.drawImage(PU_SPR[p.type] || PU_SPR.gem, Math.round(p.x - 8), Math.round(sy - 8));
+  }
+
   // tank bullets (orange, flying down)
   ctx.fillStyle = '#ffb04a';
   for (const tb of tbullets) ctx.fillRect(Math.round(tb.x) - 2, Math.round(tb.y), 4, 9);
@@ -697,6 +824,13 @@ function draw() {
   // player
   if (state === ST.PLAY && (player.inv <= 0 || (time * 10 | 0) % 2 === 0)) {
     ctx.drawImage(SPR.player.canvas, Math.round(player.x - SPR.player.w / 2), Math.round(player.y - SPR.player.h / 2));
+    if (shieldT > 0) {
+      ctx.strokeStyle = (time * 6 | 0) % 2 ? '#4a9aff' : '#9ad2ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, 24, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 
   // particles
@@ -725,6 +859,20 @@ function draw() {
   // lives
   for (let i = 0; i < lives; i++)
     ctx.drawImage(SPR.player.canvas, W - 24 - i * 26, H - 40, 18, 24);
+  // active power-up timers
+  const act = [];
+  if (tripleT > 0) act.push(['3X', tripleT, '#ffd24a']);
+  if (rapidT > 0) act.push(['FF', rapidT, '#ff8c2a']);
+  if (shieldT > 0) act.push(['S', shieldT, '#4a9aff']);
+  for (let i = 0; i < act.length; i++) {
+    const [lbl, t, col] = act[i];
+    ctx.fillStyle = col;
+    ctx.fillRect(10 + i * 40, H - 26, 34, 16);
+    ctx.fillStyle = '#10142a';
+    ctx.font = 'bold 11px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(lbl + ' ' + Math.ceil(t), 27 + i * 40, H - 14);
+  }
   // bombs
   txt('BOMB x' + bombs, W - 10, H - 30, 13, '#ffb04a', 'right');
 
@@ -754,10 +902,17 @@ function drawTitle() {
   ctx.drawImage(SPR.ship.canvas, 300, 470, 40, 30);
   ctx.drawImage(SPR.plane.canvas, 170, 530, 30, 38);
   ctx.drawImage(SPR.heli.canvas, 320, 545, 30, 28);
-  txt('управление: веди пальцем по экрану', W / 2, 600, 16, '#ccc', 'center');
-  txt('удержание — огонь · кнопка бомбы внизу', W / 2, 624, 16, '#ccc', 'center');
-  if (hiScore > 0) txt('РЕКОРД: ' + hiScore, W / 2, 570, 18, '#ffe650', 'center');
-  if ((time * 2 | 0) % 2 === 0) txt('НАЖМИ, ЧТОБЫ НАЧАТЬ', W / 2, 672, 20, '#fff', 'center');
+  txt('управление: веди пальцем по экрану', W / 2, 588, 16, '#ccc', 'center');
+  txt('удержание — огонь · кнопка бомбы внизу', W / 2, 610, 16, '#ccc', 'center');
+  // power-up legend
+  ctx.drawImage(PU_SPR.gem, 116, 628);
+  ctx.drawImage(PU_SPR.triple, 172, 628);
+  ctx.drawImage(PU_SPR.rapid, 228, 628);
+  ctx.drawImage(PU_SPR.shield, 284, 628);
+  ctx.drawImage(PU_SPR.life, 340, 628);
+  txt('усилки падают с убитых врагов', W / 2, 662, 14, '#8aff8a', 'center');
+  if (hiScore > 0) txt('РЕКОРД: ' + hiScore, W / 2, 380, 18, '#ffe650', 'center');
+  if ((time * 2 | 0) % 2 === 0) txt('НАЖМИ, ЧТОБЫ НАЧАТЬ', W / 2, 692, 20, '#fff', 'center');
 }
 
 function drawOver() {
