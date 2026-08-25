@@ -126,6 +126,7 @@ const sfx = {
   fuel:   () => beep(1500, 0.05, 'square', 0.05),
   fuelFull: () => { beep(1200, 0.07, 'square', 0.07); beep(1600, 0.1, 'square', 0.07, 0, 0.09); },
   stage:  () => { beep(520, 0.1, 'square', 0.1); beep(660, 0.1, 'square', 0.1, 0, 0.11); beep(880, 0.16, 'square', 0.1, 0, 0.22); },
+  tshoot: () => beep(380, 0.08, 'square', 0.05, -220),
   warn:   () => beep(300, 0.12, 'square', 0.08),
 };
 
@@ -259,7 +260,7 @@ let prevState = ST.TITLE;
 
 let camTop, scroll, stage, stageDist;
 let score, hiScore, lives, bombs;
-let player, bullets, enemies, fuels, bridges, particles;
+let player, bullets, tbullets, enemies, fuels, bridges, particles;
 let spawnAcc, bridgeAcc, fuelAcc, fuelBeepT;
 let dieT, banner, bannerT;
 let time = 0;
@@ -270,7 +271,7 @@ function resetGame() {
   score = 0; lives = 3; bombs = 2;
   stage = 1; stageDist = 0;
   scroll = 130;
-  bullets = []; enemies = []; fuels = []; bridges = []; particles = [];
+  bullets = []; tbullets = []; enemies = []; fuels = []; bridges = []; particles = [];
   spawnAcc = 300; bridgeAcc = 1500; fuelAcc = 700; fuelBeepT = 0;
   dieT = 0; banner = 'STAGE 1'; bannerT = 2;
   camTop = 0;
@@ -309,11 +310,9 @@ function spawnEnemy() {
 
 function spawnBridge() {
   const y = camTop - 80;
-  const b = river.sample(y);
-  const left = b.cx - b.half, right = b.cx + b.half;
   bridges.push({ w: y, h: 36 });
-  enemies.push({ t: 'tank', x: left + 46, w: y + 6, sv: 0, vx: 0, hw: 10, hh: 10, pts: 100, onBridge: true });
-  enemies.push({ t: 'tank', x: right - 46, w: y + 6, sv: 0, vx: 0, hw: 10, hh: 10, pts: 100, onBridge: true });
+  enemies.push({ t: 'tank', x: 60, w: y, sv: 0, vx: 42, hw: 12, hh: 9, pts: 100, onBridge: true, cd: rnd(0.5, 1.4) });
+  enemies.push({ t: 'tank', x: W - 60, w: y, sv: 0, vx: -42, hw: 12, hh: 9, pts: 100, onBridge: true, cd: rnd(0.5, 1.4) });
 }
 
 function spawnFuel() {
@@ -392,6 +391,7 @@ function useBomb() {
     const sy = e.w - camTop;
     if (sy > -40 && sy < H + 40 && !e.dead) killEnemy(e, true);
   }
+  for (const tb of tbullets) if (tb.y > 0 && tb.y < H) tb.dead = true;
 }
 
 /* ---------- update ---------- */
@@ -413,6 +413,8 @@ function respawn() {
   const b = river.sample(H - 110);
   player.x = b.cx; player.y = H - 110; player.inv = 2.5;
   player.fuel = Math.max(player.fuel, 55);
+  for (const tb of tbullets) tb.dead = true;
+  tbullets = tbullets.filter(t => !t.dead);
   // clear threats near spawn
   for (const e of enemies) {
     if (!e.dead && Math.abs(e.w - (camTop + player.y)) < 420) {
@@ -480,20 +482,10 @@ function update(dt) {
     }
   }
 
-  // bullets (screen space, fly up)
+  // bullets (screen space, fly up) — bridges don't block them
   for (const b of bullets) {
     b.y -= 560 * dt;
     if (b.y < -20) b.dead = true;
-    // bridge blocks bullets
-    if (!b.dead) for (const br of bridges) {
-      const by = br.w - camTop;
-      const rb = river.sample(br.w);
-      if (b.y > by - 20 && b.y < by + 20 && b.x > rb.cx - rb.half - 8 && b.x < rb.cx + rb.half + 8) {
-        b.dead = true;
-        spawnExplosion(b.x, by, false);
-        break;
-      }
-    }
   }
 
   // spawns
@@ -510,18 +502,35 @@ function update(dt) {
   }
 
   // enemies
-  const ppy = camTop + player.y;
   for (const e of enemies) {
     if (e.dead) continue;
-    const speed = (e.sv || 0) + scroll;
-    e.w += speed * dt;
-    if (e.t === 'heli') e.x += Math.sin(time * 2.2 + e.ph) * 55 * dt;
-    else if (e.vx) e.x += e.vx * dt;
-    if (e.water || e.t === 'heli' || e.t === 'plane') {
-      const eb = river.sample(e.w);
-      e.x = clamp(e.x, eb.cx - eb.half + 12, eb.cx + eb.half - 12);
+    if (e.onBridge) {
+      // tanks ride the bridge (move with the world only) and patrol
+      e.w += scroll * dt;
+      e.x += e.vx * dt;
+      if (e.x < 40) { e.x = 40; e.vx = Math.abs(e.vx); }
+      if (e.x > W - 40) { e.x = W - 40; e.vx = -Math.abs(e.vx); }
+      // tanks fire down the river at the player
+      const tsy = e.w - camTop;
+      if (tsy > 60 && tsy < H - 40) {
+        e.cd -= dt;
+        if (e.cd <= 0) {
+          e.cd = rnd(0.9, 1.9);
+          tbullets.push({ x: e.x, y: tsy + 10, dead: false });
+          sfx.tshoot();
+        }
+      }
+    } else {
+      const speed = (e.sv || 0) + scroll;
+      e.w += speed * dt;
+      if (e.t === 'heli') e.x += Math.sin(time * 2.2 + e.ph) * 55 * dt;
+      else if (e.vx) e.x += e.vx * dt;
+      if (e.water || e.t === 'heli' || e.t === 'plane') {
+        const eb = river.sample(e.w);
+        e.x = clamp(e.x, eb.cx - eb.half + 12, eb.cx + eb.half - 12);
+      }
     }
-    // water enemies vanish at bridges
+    // water enemies vanish at bridges (bridge spans the whole river)
     if (e.water) {
       for (const br of bridges)
         if (Math.abs(e.w - br.w) < 26) { e.dead = true; break; }
@@ -550,6 +559,19 @@ function update(dt) {
   enemies = enemies.filter(e => !e.dead);
   bullets = bullets.filter(b => !b.dead);
 
+  // tank bullets (fly down the river, toward the player)
+  for (const tb of tbullets) {
+    tb.y += 380 * dt;
+    if (tb.y > H + 20) tb.dead = true;
+    if (!tb.dead && player.inv <= 0 &&
+        Math.abs(tb.x - player.x) < 10 && Math.abs(tb.y - player.y) < 13) {
+      tb.dead = true;
+      crash();
+      return;
+    }
+  }
+  tbullets = tbullets.filter(b => !b.dead);
+
   // fuels: refuel + cleanup
   for (const f of fuels) {
     const sy = f.w - camTop;
@@ -567,15 +589,7 @@ function update(dt) {
   fuels = fuels.filter(f => !f.dead);
   bridges = bridges.filter(br => br.w > camTop - 100 && br.w < camTop + H + 160);
 
-  // bridge vs player (solid)
-  if (player.inv <= 0) for (const br of bridges) {
-    const by = br.w - camTop;
-    const rb = river.sample(br.w);
-    if (overlap(player.x - 8, player.y - 12, 16, 24,
-                rb.cx - rb.half - 8, by - 20, (rb.half * 2) + 16, 40)) {
-      crash(); return;
-    }
-  }
+  // (bridges are flyable: plane flies over them, no solid collision)
 
   updateParticles(dt);
   if (bannerT > 0) bannerT -= dt;
@@ -626,22 +640,20 @@ function draw() {
     txt('FUEL', sx + 26, sy + 6, 14, '#fff', 'center');
   }
 
-  // bridges
+  // bridges (span the full screen width — flyable overhead)
   for (const br of bridges) {
     const sy = br.w - camTop;
     if (sy < -60 || sy > H + 60) continue;
-    const rb = river.sample(br.w);
-    const L = rb.cx - rb.half - 10, R = rb.cx + rb.half + 10;
-    ctx.fillStyle = '#7a4a1e';
-    ctx.fillRect(L, sy - 18, R - L, 36);
-    ctx.fillStyle = '#9a6a33';
-    ctx.fillRect(L, sy - 14, R - L, 28);
+    ctx.fillStyle = '#6a3f18';
+    ctx.fillRect(0, sy - 18, W, 36);
+    ctx.fillStyle = '#8a5a28';
+    ctx.fillRect(0, sy - 14, W, 28);
     ctx.fillStyle = '#5a3414';
-    for (let x = L + 8; x < R; x += 16) ctx.fillRect(x, sy - 14, 3, 28);
-    ctx.fillStyle = '#c89a5a';
-    ctx.fillRect(L, sy - 18, R - L, 4);
+    for (let x = 8; x < W; x += 16) ctx.fillRect(x, sy - 14, 3, 28);
+    ctx.fillStyle = '#b8834a';
+    ctx.fillRect(0, sy - 18, W, 4);
     ctx.fillStyle = '#3a2008';
-    ctx.fillRect(L, sy + 14, R - L, 4);
+    ctx.fillRect(0, sy + 14, W, 4);
   }
 
   // enemies
@@ -671,6 +683,10 @@ function draw() {
   // bullets
   ctx.fillStyle = '#fff';
   for (const b of bullets) ctx.fillRect(Math.round(b.x) - 2, Math.round(b.y), 4, 10);
+
+  // tank bullets (orange, flying down)
+  ctx.fillStyle = '#ffb04a';
+  for (const tb of tbullets) ctx.fillRect(Math.round(tb.x) - 2, Math.round(tb.y), 4, 9);
 
   // player
   if (state === ST.PLAY && (player.inv <= 0 || (time * 10 | 0) % 2 === 0)) {
