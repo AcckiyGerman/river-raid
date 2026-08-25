@@ -460,10 +460,7 @@ function update(dt) {
   player.y = clamp(player.y, H * 0.42, H - 56);
   if (player.inv > 0) player.inv -= dt;
 
-  // bank collision
-  const pb = river.sample(camTop + player.y);
-  const pl = pb.cx - pb.half, pr = pb.cx + pb.half;
-  if (player.x - 9 < pl + 3 || player.x + 9 > pr - 3) { crash(); return; }
+  // (plane flies over the banks — no crash on sand; sand is where fuel is)
 
   // fuel
   player.fuel -= 2.1 * dt;
