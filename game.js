@@ -152,8 +152,21 @@ const river = {
       this.pts.push(last);
     }
   },
+  ensureLow(yMin) {
+    let first = this.pts[0];
+    while (first.y > yMin) {
+      const ny = first.y - 140;
+      const cx = clamp(first.cx + rnd(-80, 80), 140, W - 140);
+      const half = clamp(first.half + rnd(-35, 35), 72, 148);
+      this.pts.unshift({ y: ny, cx, half });
+      first = this.pts[0];
+    }
+  },
   trim(yMin) {
     while (this.pts.length > 4 && this.pts[0].y < yMin) this.pts.shift();
+  },
+  trimHigh(yMax) {
+    while (this.pts.length > 4 && this.pts[this.pts.length - 1].y > yMax) this.pts.pop();
   },
   sample(y) {
     const pts = this.pts;
@@ -209,10 +222,10 @@ function paintRow(buf, wy) {
   }
 }
 
-let bufTopWorld = 0; // worldY of buffer row 0
+let bufTopWorld = 0; // worldY of buffer row 0 (smallest worldY)
 function initTerrain(camTop) {
   bufTopWorld = camTop - TOPM;
-  river.ensure(bufTopWorld + HB + 100);
+  river.ensureLow(bufTopWorld - 120);
   for (let r = 0; r < HB; r++) {
     terCtx.save();
     terCtx.translate(0, r);
@@ -225,10 +238,12 @@ function scrollTerrain(d) {
   d = Math.min(d, HB - 8);
   d = Math.floor(d);
   if (d < 1) return;
-  bufTopWorld += d;
-  river.ensure(bufTopWorld + HB + 120);
-  river.trim(bufTopWorld - 300);
-  terCtx.drawImage(ter, 0, d, W, HB - d, 0, 0, W, HB - d);
+  // flying upstream: world moves DOWN on screen -> buffer content shifts down,
+  // fresh rows appear at the top of the buffer (smallest worldY)
+  bufTopWorld -= d;
+  river.ensureLow(bufTopWorld - 120);
+  river.trimHigh(bufTopWorld + HB + 200);
+  terCtx.drawImage(ter, 0, 0, W, HB - d, 0, d, W, HB - d);
   for (let r = 0; r < d; r++) {
     terCtx.save();
     terCtx.translate(0, r);
@@ -430,8 +445,9 @@ function update(dt) {
     sfx.stage();
   }
 
+  // flying upstream: camera worldY decreases (upstream = -worldY)
   const dCam = scroll * dt;
-  camTop += dCam;
+  camTop -= dCam;
   scrollTerrain(dCam);
 
   // --- player movement (keyboard) ---
