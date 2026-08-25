@@ -224,8 +224,10 @@ function paintRow(buf, wy) {
 }
 
 let bufTopWorld = 0; // worldY of buffer row 0 (smallest worldY)
+let terRem = 0; // fractional scroll remainder (keeps buffer locked to camTop)
 function initTerrain(camTop) {
   bufTopWorld = camTop - TOPM;
+  terRem = 0;
   river.ensureLow(bufTopWorld - 120);
   for (let r = 0; r < HB; r++) {
     terCtx.save();
@@ -236,9 +238,11 @@ function initTerrain(camTop) {
 }
 function scrollTerrain(d) {
   if (d <= 0) return;
-  d = Math.min(d, HB - 8);
-  d = Math.floor(d);
+  terRem += d;
+  d = Math.floor(terRem);
+  terRem -= d;
   if (d < 1) return;
+  d = Math.min(d, HB - 8);
   // flying upstream: world moves DOWN on screen -> buffer content shifts down,
   // fresh rows appear at the top of the buffer (smallest worldY)
   bufTopWorld -= d;
@@ -430,7 +434,9 @@ function update(dt) {
 
   if (state === ST.DYING) {
     dieT -= dt;
-    scrollTerrain(scroll * dt * 0.3);
+    const dd = scroll * dt * 0.3;
+    camTop -= dd;
+    scrollTerrain(dd);
     updateParticles(dt);
     if (dieT <= 0) respawn();
     return;
@@ -505,8 +511,8 @@ function update(dt) {
   for (const e of enemies) {
     if (e.dead) continue;
     if (e.onBridge) {
-      // tanks ride the bridge (move with the world only) and patrol
-      e.w += scroll * dt;
+      // tanks are bolted to the bridge (fixed worldY = bridge w, which
+      // scrolls with the camera); only x patrols left/right
       e.x += e.vx * dt;
       if (e.x < 40) { e.x = 40; e.vx = Math.abs(e.vx); }
       if (e.x > W - 40) { e.x = W - 40; e.vx = -Math.abs(e.vx); }
