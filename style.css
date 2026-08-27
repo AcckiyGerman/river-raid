@@ -22,7 +22,7 @@ canvas {
   background: #000;
   touch-action: none;
 }
-#pauseBtn, #bombBtn {
+#pauseBtn, #bombBtn, #muteBtn {
   position: fixed;
   width: 52px;
   height: 52px;
@@ -45,5 +45,10 @@ canvas {
 #bombBtn {
   bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
   left: calc(env(safe-area-inset-left, 0px) + 10px);
+}
+#muteBtn {
+  top: calc(env(safe-area-inset-top, 0px) + 66px);
+  right: calc(env(safe-area-inset-right, 0px) + 8px);
+  font-size: 18px;
 }
 #pauseBtn:active, #bombBtn:active { background: rgba(120,120,120,0.6); }
